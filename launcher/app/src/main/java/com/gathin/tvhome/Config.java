@@ -160,6 +160,12 @@ final class Config {
     final boolean wallpaperCaptions;
     /** Answer VIEW_INPUTS with the Inputs menu (handle_view_inputs); see InputsRequestActivity. */
     final boolean handleViewInputs;
+    /** Holding or quickly repeating Volume up/down grows the step 1, 2, 4, 8 (volume_acceleration). */
+    final boolean volumeAcceleration;
+    /** A Bluetooth pill next to Inputs with a menu of paired devices (bluetooth_pill). */
+    final boolean bluetoothPill;
+    /** Apps placed first in the grid, right after the dock (grid_first_apps). */
+    final List<String> gridFirstApps;
 
     private Config(List<String> dockApps, boolean fillDock, List<String> hiddenApps, String liveTvPackage,
                    String liveTvAction, String liveTvInputId, Map<String, String> launchActions, Map<String, String> appLabels,
@@ -173,8 +179,11 @@ final class Config {
                    Festival festival, int[] inputKeycodes, List<String> appKeys, String stockHomeRedirect,
                    List<RaceWeekend.Race> raceCalendar, boolean cinematicHome, boolean ambientGlow, boolean appGlow, int homeIdleClockMinutes,
                    boolean keyFilter, boolean dockGlass, String glowStyle, boolean wallpaperCaptions,
-                   boolean handleViewInputs) {
+                   boolean handleViewInputs, boolean volumeAcceleration, boolean bluetoothPill, List<String> gridFirstApps) {
         this.handleViewInputs = handleViewInputs;
+        this.volumeAcceleration = volumeAcceleration;
+        this.bluetoothPill = bluetoothPill;
+        this.gridFirstApps = Collections.unmodifiableList(gridFirstApps);
         this.inputKeycodes = inputKeycodes;
         this.appKeys = Collections.unmodifiableList(appKeys);
         this.keyFilter = keyFilter;
@@ -299,6 +308,9 @@ final class Config {
         boolean settingsKeyPanel = res.getBoolean(R.bool.settings_key_panel);
         int[] inputKeycodes = res.getIntArray(R.array.input_key_keycodes);
         boolean handleViewInputs = res.getBoolean(R.bool.handle_view_inputs);
+        boolean volumeAcceleration = res.getBoolean(R.bool.volume_acceleration);
+        boolean bluetoothPill = res.getBoolean(R.bool.bluetooth_pill);
+        List<String> gridFirst = new ArrayList<>(Arrays.asList(res.getStringArray(R.array.grid_first_apps)));
         List<String> appKeys = new ArrayList<>(Arrays.asList(res.getStringArray(R.array.app_keys)));
         String stockHomeRedirect = res.getString(R.string.stock_home_redirect).trim();
         boolean cinematic = res.getBoolean(R.bool.cinematic_home);
@@ -362,6 +374,9 @@ final class Config {
             settingsKeyPanel = bool(json, "settings_key_panel", settingsKeyPanel);
             inputKeycodes = intArray(json, "input_key_keycodes", inputKeycodes);
             handleViewInputs = bool(json, "handle_view_inputs", handleViewInputs);
+            volumeAcceleration = bool(json, "volume_acceleration", volumeAcceleration);
+            bluetoothPill = bool(json, "bluetooth_pill", bluetoothPill);
+            gridFirst = stringList(json, "grid_first_apps", gridFirst);
             appKeys = stringList(json, "app_keys", appKeys);
             stockHomeRedirect = string(json, "stock_home_redirect", stockHomeRedirect);
             cinematic = bool(json, "cinematic_home", cinematic);
@@ -431,7 +446,7 @@ final class Config {
                 Math.max(0, Math.min(100, skyIntensity)), settingsKeycodes, settingsKeyPanel, wallpaperEnabled, wallpaper,
                 wallpapers, rotationMinutes, wallpaperDim, dockOpacity, wallpaperOrder, applied,
                 festival, inputKeycodes, appKeys, stockHomeRedirect, json == null ? Collections.emptyList() : raceCalendar(json), cinematic, ambientGlow, appGlow,
-                Math.max(0, idleClockMinutes), keyFilter, dockGlass, glowStyle, wallpaperCaptions, handleViewInputs);
+                Math.max(0, idleClockMinutes), keyFilter, dockGlass, glowStyle, wallpaperCaptions, handleViewInputs, volumeAcceleration, bluetoothPill, gridFirst);
     }
 
     /**

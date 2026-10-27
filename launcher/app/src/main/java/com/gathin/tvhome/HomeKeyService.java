@@ -1,6 +1,7 @@
 package com.gathin.tvhome;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -45,8 +46,22 @@ public class HomeKeyService extends AccessibilityService {
 
     /** Waits for the user to unlock when Android binds this service at boot; null once the config is read. */
     private BroadcastReceiver unlockReceiver;
+    /**
+     * stock_home_redirect without key filtering: the Home button, seen through the system's "homekey" broadcast.
+     * The window redirect alone misses a press made while the stock home is already in front (after a voice
+     * search's genre results, say), since no window changes then.
+     */
+    private BroadcastReceiver homeKeyReceiver;
     /** The stock launcher's HOME activities (stock_home_redirect), disabled ones included. */
     private final Set<String> stockHome = new HashSet<>();
+    private String stockHomePackage = "";
+    /** volume_acceleration: watches volume changes while this service is bound. */
+    private VolumeKeys volumeKeys;
+    /** The last app other than the stock launcher that came to the front, and when. */
+    private String lastWindowPackage = "";
+    private long lastWindowAt;
+    private static final String VOICE_SEARCH = "com.google.android.katniss";
+    private static final long VOICE_RESULT_WINDOW_MS = 30_000;
 
     @Override
     protected void onServiceConnected() {
@@ -84,6 +99,11 @@ public class HomeKeyService extends AccessibilityService {
     @Override
     public void onDestroy() {
         stopWaitingForUnlock();
+        if (volumeKeys != null) volumeKeys.stop();
+        if (homeKeyReceiver != null) {
+            unregisterReceiver(homeKeyReceiver);
+            homeKeyReceiver = null;
+        }
         super.onDestroy();
     }
 
@@ -96,10 +116,34 @@ public class HomeKeyService extends AccessibilityService {
         appScancodes = RemoteKeys.parseAppScancodes(config.appKeys);
         RemoteKeys.applyKeyFilter(this, config.keyFilter);
         stockHome.clear();
+        stockHomePackage = config.stockHomeRedirect;
+        if (volumeKeys != null) volumeKeys.stop();
+        volumeKeys = config.volumeAcceleration ? new VolumeKeys(this) : null;
+        if (volumeKeys != null) volumeKeys.start();
         if (!config.stockHomeRedirect.isEmpty()) {
             Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(config.stockHomeRedirect);
             for (ResolveInfo ri : getPackageManager().queryIntentActivities(home, PackageManager.MATCH_DISABLED_COMPONENTS)) {
                 stockHome.add(ri.activityInfo.name);
+            }
+        }
+        // home_key_service.xml subscribes to no events, so onAccessibilityEvent never ran and the redirect
+        // could not fire. Ask for window changes only while a redirect is configured.
+        if (!stockHome.isEmpty() && homeKeyReceiver == null) {
+            homeKeyReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if ("homekey".equals(intent.getStringExtra("reason"))) goHome();
+                }
+            };
+            // ACTION_CLOSE_SYSTEM_DIALOGS reaches apps up to Android 11; later versions simply never send it here,
+            // and the window redirect below still covers the stock home appearing.
+            registerSystemReceiver(homeKeyReceiver, new IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+        }
+        if (!stockHome.isEmpty()) {
+            AccessibilityServiceInfo info = getServiceInfo();
+            if (info != null) {
+                info.eventTypes |= AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+                setServiceInfo(info);
             }
         }
         holdAppKeys = RemoteKeys.parseHoldAppKeys(config.appKeys);
@@ -133,6 +177,12 @@ public class HomeKeyService extends AccessibilityService {
         }
         if (RemoteKeys.handle(this, event, appKeys.get(event.getKeyCode()),
                 holdAppKeys.get(event.getKeyCode()))) return true;
+        // With stock_home_redirect the stock launcher is enabled and owns Home, so take the Home button too (only
+        // while key_filter is on; without it the homekey broadcast does the same job).
+        if (event.getKeyCode() == KeyEvent.KEYCODE_HOME && !stockHome.isEmpty()) {
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) goHome();
+            return true;
+        }
         if (event.getKeyCode() != KeyEvent.KEYCODE_ALL_APPS) return false;
         if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
             Intent home = new Intent(Intent.ACTION_MAIN)
@@ -148,11 +198,35 @@ public class HomeKeyService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         // stock_home_redirect: the firmware turned the stock launcher back on and its home screen came up.
         if (stockHome.isEmpty() || event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
+        CharSequence pkg = event.getPackageName();
         CharSequence cls = event.getClassName();
-        if (cls != null && stockHome.contains(cls.toString())) {
-            startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(getPackageName())
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+        if (pkg == null || pkg.toString().equals(stockHomePackage)) {
+            // Voice search opens genre and browse results inside the stock home screen: leave those up.
+            if (cls == null || !stockHome.contains(cls.toString())) return;
+            if (VOICE_SEARCH.equals(lastWindowPackage)
+                    && System.currentTimeMillis() - lastWindowAt < VOICE_RESULT_WINDOW_MS) return;
+        } else {
+            lastWindowPackage = pkg.toString();
+            lastWindowAt = System.currentTimeMillis();
+            return;
         }
+        goHome();
+    }
+
+    /** A receiver for a broadcast only the system sends, so it has to be exported (the flag exists from Android 13). */
+    @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerSystemReceiver(BroadcastReceiver receiver, IntentFilter filter) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(receiver, filter);
+        }
+    }
+
+    /** Brings this launcher's home screen to the front. */
+    private void goHome() {
+        startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(getPackageName())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
     }
 
     @Override

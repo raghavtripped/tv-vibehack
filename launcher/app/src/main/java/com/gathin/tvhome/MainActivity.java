@@ -158,6 +158,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView greeting;
     private View clockBlock;
     private View btnInputs;
+    /** bluetooth_pill: paired devices and their state, next to Inputs; null text means the plain label. */
+    private TextView btnBluetooth;
+    private BluetoothDevices bluetooth;
+    private boolean bluetoothPill;
     /** config show_inputs_pill: false keeps the Inputs pill hidden even when the TV has inputs. */
     private boolean showInputsPill = true;
     private TextView btnWifi;
@@ -564,6 +568,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnInputs = findViewById(R.id.btnInputs);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
+        btnBluetooth = findViewById(R.id.btnBluetooth);
+        bluetoothPill = cfg.bluetoothPill;
+        bluetooth = new BluetoothDevices(this);
+        btnBluetooth.setOnClickListener(v -> showBluetooth());
+        btnBluetooth.setOnLongClickListener(v -> {
+            open(bluetoothSettings());
+            return true;
+        });
+        updateBluetoothButton();
+        if (bluetoothPill) {
+            // A fourth pill leaves the date less room: let it wrap to a second line, as long dates in German or
+            // Spanish do (date_single_line), instead of cutting "SUNDAY 25 OCTOBER" short.
+            TextView date = findViewById(R.id.date);
+            date.setSingleLine(false);
+            date.setMaxLines(2);
+            date.setAllCaps(true);   // setSingleLine replaces the layout's all-caps transformation
+        }
         btnWifi.setOnClickListener(v -> openNetworkPill());
         btnWifi.setOnLongClickListener(v -> {
             open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
@@ -611,12 +632,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == rightButton;
         };
         btnInputs.setOnKeyListener(pillKeys);
+        btnBluetooth.setOnKeyListener(pillKeys);
         btnWifi.setOnKeyListener(pillKeys);
         btnSettings.setOnKeyListener(pillKeys);
         btnReorder.setOnKeyListener(pillKeys);
         btnLibraryTop.setOnKeyListener(pillKeys);
         if (advancedEffects) {
-            for (View button : new View[]{btnInputs, btnWifi, btnReorder, btnLibraryTop, btnSettings}) {
+            for (View button : new View[]{btnInputs, btnBluetooth, btnWifi, btnReorder, btnLibraryTop, btnSettings}) {
                 button.setOnFocusChangeListener((view, focused) -> view.animate()
                         .scaleX(focused ? 1.04f : 1f).scaleY(focused ? 1.04f : 1f)
                         .setDuration(reducedMotion ? Motion.REDUCED_MS : 160).start());
@@ -742,6 +764,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         updateClockVisibility();
         tileRefresh.onStart();
+        if (bluetoothPill) bluetooth.start(() -> runOnUiThread(this::updateBluetoothButton));
+        updateBluetoothButton();
     }
 
     @Override
@@ -951,6 +975,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         handler.removeCallbacks(clockCheck);
         stopped = true;
         tileRefresh.onStop();
+        bluetooth.stop();
     }
 
     /**
@@ -1971,8 +1996,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         hideHero();
     }
 
-    /** The first top-bar button after Inputs that is shown: the network pill, Reorder, then Settings (always there). */
+    /** The first top-bar button after Inputs that is shown: Bluetooth, the network pill, Reorder, then Settings. */
     private View firstTopButton() {
+        if (btnBluetooth.getVisibility() == View.VISIBLE) return btnBluetooth;
         if (btnWifi.getVisibility() == View.VISIBLE) return btnWifi;
         if (btnReorder.getVisibility() == View.VISIBLE) return btnReorder;
         return findViewById(R.id.btnSettings);
@@ -2488,6 +2514,91 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         }
         open(new Intent(inputAction).setDataAndType(uri, "vnd.android.cursor.item/channel"));
+    }
+
+    /** bluetooth_pill: shown when the TV has Bluetooth; names connected headphones or a speaker, like the Wi-Fi pill. */
+    private void updateBluetoothButton() {
+        if (btnBluetooth == null) return;
+        boolean show = bluetoothPill && bluetooth.available();
+        int visibility = show ? View.VISIBLE : View.GONE;
+        if (btnBluetooth.getVisibility() != visibility) btnBluetooth.setVisibility(visibility);
+        if (!show) return;
+        String audio = bluetooth.connectedAudioName();
+        CharSequence label = audio != null ? audio : getString(R.string.bluetooth);
+        if (!TextUtils.equals(btnBluetooth.getText(), label)) btnBluetooth.setText(label);
+    }
+
+    /** Dropdown under the Bluetooth pill: paired devices with their state, Pair new device, Bluetooth settings. */
+    private void showBluetooth() {
+        View anchor = btnBluetooth;
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        int width = Math.max(anchor.getWidth(), (int) (220 * density));
+        final PopupWindow popup = glassPopup(panel, width);
+        Intent settings = bluetoothSettings();
+
+        if (!bluetooth.enabled()) {
+            addBluetoothRow(rows, popup, R.drawable.ic_bluetooth, getString(R.string.bluetooth_off), null, () -> open(settings));
+        } else {
+            List<BluetoothDevices.Device> devices = bluetooth.paired();
+            for (BluetoothDevices.Device d : devices) {
+                int icon = d.kind == BluetoothDevices.Kind.HEADPHONES ? R.drawable.ic_headphones
+                        : d.kind == BluetoothDevices.Kind.SPEAKER ? R.drawable.ic_speaker
+                        : d.kind == BluetoothDevices.Kind.REMOTE ? R.drawable.ic_remote : R.drawable.ic_bluetooth;
+                // An app cannot connect a device on this Android, so a device row opens TV Settings, where it can.
+                addBluetoothRow(rows, popup, icon, d.name, d.connected, () -> open(settings));
+            }
+            if (devices.isEmpty()) {
+                addBluetoothRow(rows, popup, R.drawable.ic_bluetooth, getString(R.string.bluetooth_none), null, () -> open(settings));
+            }
+            addSeparator(rows);
+            addBluetoothRow(rows, popup, R.drawable.ic_add, getString(R.string.bluetooth_pair), null, () -> {
+                // TV Settings' pairing screen. Some firmware lets only the system open it (MiTV-MOOR2: Permission
+                // Denial), so fall back to Settings, where Remotes & Accessories has Pair accessory.
+                try {
+                    startActivity(new Intent("com.google.android.intent.action.CONNECT_INPUT")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (ActivityNotFoundException | SecurityException e) {
+                    open(settings);
+                }
+            });
+        }
+        addBluetoothRow(rows, popup, R.drawable.ic_settings, getString(R.string.bluetooth_settings), null, () -> open(settings));
+
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max(width, Math.min(panel.getMeasuredWidth(), (int) (380 * density))));
+        int alignment = getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.END : Gravity.START;
+        dropIn(popup, panel, anchor, alignment);
+        rows.getChildAt(0).requestFocus();
+    }
+
+    /** Bluetooth settings, or the TV's main Settings where it has no Bluetooth page of its own (MiTV-MOOR2:
+     *  Remotes & Accessories is a section of the main screen). */
+    private Intent bluetoothSettings() {
+        Intent i = systemIntent(Settings.ACTION_BLUETOOTH_SETTINGS);
+        return i.resolveActivity(getPackageManager()) != null ? i : systemIntent(Settings.ACTION_SETTINGS);
+    }
+
+    /** One row of the Bluetooth menu: connected true shows the green dot, false "Paired", null no status. */
+    private void addBluetoothRow(LinearLayout rows, PopupWindow popup, int iconRes, String title, Boolean connected,
+                                 Runnable action) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        ((ImageView) row.findViewById(R.id.icon)).setImageResource(iconRes);
+        ((TextView) row.findViewById(R.id.title)).setText(title);
+        TextView status = row.findViewById(R.id.status);
+        View dot = row.findViewById(R.id.dot);
+        if (connected == null) {
+            status.setVisibility(View.GONE);
+            dot.setVisibility(View.GONE);
+        } else {
+            status.setText(connected ? R.string.connected : R.string.bluetooth_paired);
+            dot.setVisibility(connected ? View.VISIBLE : View.GONE);
+        }
+        row.setOnClickListener(v -> {
+            popup.dismiss();
+            action.run();
+        });
+        rows.addView(row);
     }
 
     /** Dropdown menu under the Inputs pill: HDMI ports (with connection state), AV and Live TV. */
