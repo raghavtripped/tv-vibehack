@@ -9,8 +9,11 @@ the core bigger or change how it behaves. You install an add-on only if you want
 
 | Add-on | What it does | Author | Tested on | Permissions |
 |---|---|---|---|---|
+| [Weather](weather/) | A seven-day forecast for one city from Open-Meteo, as a "Weather" card | Raghav Tripathi | Xiaomi MiTV-MOOR2, Google TV / Android 11 | `INTERNET`, only while the forecast is open |
+| [Ambient light](ambilight/) | A Bluetooth LEDDMX LED strip behind the TV follows the picture (the TV's own colour taking on Xiaomi MediaTek TVs, video and protected apps included; else a webcam or screen capture) with beat flashes, and the music when the picture is blocked | Raghav Tripathi | Xiaomi MiTV-MOOR2, Google TV / Android 11 | Bluetooth, screen capture, sound spectrum, camera (granted once over ADB), boot start; no `INTERNET` |
+| [Phone remote](phoneremote/) | Steps and QR codes for using a phone (Google TV app) as the TV's remote, as a "Phone remote" card | Raghav Tripathi | Xiaomi MiTV-MOOR2, Google TV / Android 11 | None |
 
-None yet. A widget, an info tile, a storage or smart-home card: if it can live as its own small app,
+A widget, an info tile, a storage or smart-home card: if it can live as its own small app,
 it can live here. See the rules below.
 
 ## How an add-on works

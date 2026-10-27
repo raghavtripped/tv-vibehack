@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'io.cleanyourtv.weather'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.cleanyourtv.weather'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+        // The forecast location. Bengaluru; change both and rebuild for another city.
+        buildConfigField 'String', 'CITY', '"Bengaluru"'
+        buildConfigField 'double', 'LATITUDE', '12.97'
+        buildConfigField 'double', 'LONGITUDE', '77.59'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            // Sideloaded over ADB, never published: signed with the debug key, as the launcher is.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

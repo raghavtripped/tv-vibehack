@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ambient light</string>
+    <string name="running">Matching the LED strip to the picture</string>
+    <string name="on">Ambient light on</string>
+    <string name="off">Ambient light off</string>
+    <string name="denied">Ambient light needs screen capture; see its README to allow it once over ADB</string>
+</resources>
