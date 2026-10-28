@@ -12,7 +12,10 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.util.Log;
@@ -23,6 +26,10 @@ import android.util.Log;
  * mode). It reconnects on its own and only ever sends the newest frame: a colour that arrives while the previous
  * write is in flight replaces any colour still waiting.
  *
+ * <p>While the TV sleeps ({@link #sleep}) it lets go of the strip and stops trying; {@link #wake} starts a fresh
+ * connection. A connection attempt that never answers is given up after {@link #CONNECT_TIMEOUT_MS}, and Bluetooth
+ * being switched off and on again starts over, so a stale link can't leave the strip dark.
+ *
  * <p>Everything runs on the handler passed in, including the GATT callbacks' follow-up work.
  */
 @SuppressLint("MissingPermission") // BLUETOOTH and BLUETOOTH_ADMIN are install-time on the API levels this runs on.
@@ -31,6 +38,8 @@ final class Strip {
     private static final String TAG = "Ambilight";
     static final String PREF_ADDRESS = "strip_address";
     private static final long SCAN_MS = 20_000, RETRY_MS = 5_000, WRITE_TIMEOUT_MS = 300;
+    /** Android gives up on a direct connection after about 30 s; past this the stack has lost the attempt. */
+    static final long CONNECT_TIMEOUT_MS = 35_000;
 
     private final Context context;
     private final Handler handler;
@@ -39,7 +48,7 @@ final class Strip {
 
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic channel;
-    private boolean closed, writing, scanning;
+    private boolean closed, writing, scanning, asleep;
     private byte[] pending;
     /** Power and brightness frames go before colours and are never replaced by them. */
     private final java.util.ArrayDeque<byte[]> controls = new java.util.ArrayDeque<>();
@@ -53,8 +62,77 @@ final class Strip {
         adapter = manager == null ? null : manager.getAdapter();
     }
 
+    private final Runnable reconnect = this::connect;
+    private final Runnable connectTimeout = () -> {
+        if (gatt == null || channel != null) return;
+        Log.i(TAG, "connection attempt timed out");
+        drop();
+        retry();
+    };
+
+    private final BroadcastReceiver bluetooth = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent intent) {
+            int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+            handler.post(() -> {
+                if (state == BluetoothAdapter.STATE_ON) {
+                    Log.i(TAG, "bluetooth on");
+                    drop();
+                    handler.removeCallbacks(reconnect);
+                    connect();
+                } else if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
+                    stopScan();
+                    drop();
+                }
+            });
+        }
+    };
+
     void open() {
+        context.registerReceiver(bluetooth, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), null, handler);
         handler.post(this::connect);
+    }
+
+    /** The TV is going to sleep: sends a last frame (if any), then lets go of the strip until {@link #wake}. */
+    void sleep(byte[] last) {
+        handler.post(() -> {
+            asleep = true;
+            handler.removeCallbacks(reconnect);
+            stopScan();
+            if (last != null && channel != null) write(last);
+            handler.postDelayed(() -> {
+                if (asleep) drop();
+            }, 150);
+        });
+    }
+
+    /** The TV woke up: connects again straight away, or switches the strip back on if the link survived. */
+    void wake() {
+        handler.post(() -> {
+            asleep = false;
+            handler.removeCallbacks(reconnect);
+            if (channel != null) {
+                controls.add(Leddmx.power(true));
+                controls.add(Leddmx.brightness(100));
+                flush();
+                return;
+            }
+            drop();
+            connect();
+        });
+    }
+
+    /** Forgets the current link, if any, without scheduling another attempt. */
+    private void drop() {
+        handler.removeCallbacks(connectTimeout);
+        if (gatt != null) {
+            gatt.disconnect();
+            gatt.close();
+            gatt = null;
+        }
+        channel = null;
+        writing = false;
+        controls.clear();
     }
 
     /** Queues one frame; it replaces any frame not yet sent. */
@@ -79,13 +157,14 @@ final class Strip {
             if (last != null && channel != null) write(last);
             handler.postDelayed(() -> {
                 closed = true;
+                handler.removeCallbacks(reconnect);
                 stopScan();
-                if (gatt != null) {
-                    gatt.disconnect();
-                    gatt.close();
-                    gatt = null;
+                drop();
+                try {
+                    context.unregisterReceiver(bluetooth);
+                } catch (IllegalArgumentException ignored) {
+                    // Never opened.
                 }
-                channel = null;
             }, 150);
         });
     }
@@ -95,7 +174,7 @@ final class Strip {
     }
 
     private void connect() {
-        if (closed || gatt != null) return;
+        if (closed || asleep || gatt != null || scanning) return;
         if (adapter == null || !adapter.isEnabled()) {
             retry();
             return;
@@ -108,10 +187,18 @@ final class Strip {
         Log.i(TAG, "connecting to " + address);
         BluetoothDevice device = adapter.getRemoteDevice(address);
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
+        handler.removeCallbacks(connectTimeout);
+        if (gatt == null) {
+            retry();
+        } else {
+            handler.postDelayed(connectTimeout, CONNECT_TIMEOUT_MS);
+        }
     }
 
+    /** One pending attempt at a time: a later retry replaces an earlier one. */
     private void retry() {
-        if (!closed) handler.postDelayed(this::connect, RETRY_MS);
+        handler.removeCallbacks(reconnect);
+        if (!closed && !asleep) handler.postDelayed(reconnect, RETRY_MS);
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -171,14 +258,13 @@ final class Strip {
             handler.post(() -> {
                 if (g != gatt) return;
                 if (state == BluetoothProfile.STATE_CONNECTED) {
-                    g.discoverServices();
+                    if (!g.discoverServices()) {
+                        drop();
+                        retry();
+                    }
                 } else {
                     Log.i(TAG, "disconnected, status " + status);
-                    g.close();
-                    gatt = null;
-                    channel = null;
-                    writing = false;
-                    controls.clear();
+                    drop();
                     retry();
                 }
             });
@@ -192,10 +278,12 @@ final class Strip {
                 BluetoothGattCharacteristic c = service == null ? null : service.getCharacteristic(Leddmx.CHARACTERISTIC);
                 if (c == null) {
                     Log.w(TAG, "no LEDDMX channel on this device");
-                    g.disconnect();
+                    drop();
+                    retry();
                     return;
                 }
                 c.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+                handler.removeCallbacks(connectTimeout);
                 channel = c;
                 Log.i(TAG, "strip ready");
                 controls.addFirst(Leddmx.brightness(100));

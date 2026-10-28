@@ -78,18 +78,27 @@ public class AmbiService extends Service {
     private final BroadcastReceiver screen = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent intent) {
-            boolean on = Intent.ACTION_SCREEN_ON.equals(intent.getAction());
-            handler.post(() -> {
-                screenOn = on;
-                sent = -1;
-                strip.control(Leddmx.power(on));
-                taker.pause(!on);
-                if (on) strip.control(Leddmx.brightness(100));
-                handler.removeCallbacks(tick);
-                if (on) handler.post(tick);
-            });
+            screen(Intent.ACTION_SCREEN_ON.equals(intent.getAction()));
         }
     };
+
+    /**
+     * Standby switches the strip off and lets go of it; waking connects again at once. The TV may cut the USB
+     * power that feeds the strip while it sleeps, so the old link can't be trusted after a wake.
+     */
+    private void screen(boolean on) {
+        handler.post(() -> {
+            if (on == screenOn) return;
+            Log.i(TAG, on ? "screen on" : "screen off");
+            screenOn = on;
+            sent = -1;
+            taker.pause(!on);
+            if (on) strip.wake();
+            else strip.sleep(Leddmx.power(false));
+            handler.removeCallbacks(tick);
+            if (on) handler.post(tick);
+        });
+    }
 
     @Override
     public void onCreate() {
@@ -121,7 +130,8 @@ public class AmbiService extends Service {
         } else {
             startForeground(1, notification());
         }
-        if (running) return START_NOT_STICKY;
+        // Sticky: if Android kills the process for memory, it starts the service again (with no intent).
+        if (running) return START_STICKY;
         // The TV's own colour taking needs no screen capture. Screen capture is only started where it's missing:
         // its virtual display, appearing while a protected film plays, makes Prime Video stop with an HDCP
         // ("HDMI connection") error, and on TVs with a hardware video plane it can't see films anyway.
@@ -156,8 +166,10 @@ public class AmbiService extends Service {
         camera.start();
         handler.post(this::listen);
         handler.post(tick);
+        // Restarted by Android, or by an update, while the TV is in standby: stay dark until it wakes.
+        if (!getSystemService(android.os.PowerManager.class).isInteractive()) screen(false);
         Log.i(TAG, tvColors ? "started with the TV's colour taking" : "started with screen capture");
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
     private void onImage(ImageReader r) {
