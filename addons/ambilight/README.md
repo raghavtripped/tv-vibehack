@@ -59,11 +59,13 @@ plays a protected film stops it with an HDCP "HDMI connection" error.
   strip shows the picture without beat flashes (and, with screen capture only, breathes). YouTube, Spotify and most other apps play PCM and are heard.
   Playing through a Bluetooth speaker turns everything into PCM through the mixer, so then Hotstar is heard too.
 - **Standby and power-up.** Many TVs cut USB power to the strip in standby. The add-on switches the strip off
-  and lets go of it when the screen goes off, and connects again as soon as it comes back on. Straight after
-  power returns, the strip's Bluetooth answers before its LED controller listens, and a "power on" sent then is
-  lost (colour frames alone don't switch it on), so "power on" is sent again 1, 3 and 6 s after connecting and
-  every 15 s after that. A connection attempt that never answers is dropped after 35 s; Bluetooth being
-  switched off and on, or Android stopping the app for memory, start it over.
+  and lets go of it when the screen goes off, and connects again as soon as it comes back on. Switching on from
+  off takes the controller a moment: anything sent right behind "power on" cancels it and the strip stays dark
+  (measured: power on, brightness and a colour back to back stay off; with 0.4 s after power on it lights), so
+  nothing else is sent for 0.4 s after a power frame. Colour frames alone don't switch it on, so "power on" is
+  also sent again 1, 3 and 6 s after connecting and every 15 s after that. A connection attempt that never
+  answers is dropped after 35 s, a link that refuses writes for 3 s is replaced, and Bluetooth being switched off
+  and on, or Android stopping the app for memory, start it over.
 - One Bluetooth client at a time: while the add-on is connected, the strip's phone app cannot connect, and the
   other way round. Close the phone app first.
 - A 5 m strip at full brightness can draw more than a TV USB port gives; if it flickers, power it from a

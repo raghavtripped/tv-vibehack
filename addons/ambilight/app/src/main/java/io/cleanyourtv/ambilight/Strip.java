@@ -35,6 +35,15 @@ import android.util.Log;
  * switch it on: "power on" is sent again a little after connecting and every {@link #KEEP_ON_MS} after that,
  * each time followed by the last colour.
  *
+ * <p>Android allows one operation at a time per link and refuses writes until the previous one is acknowledged.
+ * When that acknowledgement is lost (seen after the TV wakes, while its own remote reconnects too), the link
+ * still says "connected" but refuses every write: after {@link #STUCK_MS} of refusals it is thrown away and a
+ * fresh one is made.
+ *
+ * <p>Switching on from off takes the controller a moment: anything sent right behind "power on" cancels it and
+ * the strip stays dark (measured: power on + brightness + colour back to back stays off; with 0.4 s after power
+ * on it lights). So nothing is sent for {@link #POWER_GAP_MS} after a power frame.
+ *
  * <p>Everything runs on the handler passed in, including the GATT callbacks' follow-up work.
  */
 @SuppressLint("MissingPermission") // BLUETOOTH and BLUETOOTH_ADMIN are install-time on the API levels this runs on.
@@ -46,6 +55,8 @@ final class Strip {
     /** Android gives up on a direct connection after about 30 s; past this the stack has lost the attempt. */
     static final long CONNECT_TIMEOUT_MS = 35_000;
     static final long KEEP_ON_MS = 15_000;
+    static final long STUCK_MS = 3_000;
+    static final long POWER_GAP_MS = 400;
     private static final long[] SETTLE_MS = {1_000, 3_000, 6_000};
 
     private final Context context;
@@ -59,7 +70,7 @@ final class Strip {
     private byte[] pending, lastColor;
     /** Power and brightness frames go before colours and are never replaced by them. */
     private final java.util.ArrayDeque<byte[]> controls = new java.util.ArrayDeque<>();
-    private long writeStarted;
+    private long writeStarted, refusedSince = -1, quietUntil;
 
     Strip(Context context, Handler handler, SharedPreferences prefs) {
         this.context = context.getApplicationContext();
@@ -79,6 +90,7 @@ final class Strip {
         }
     };
     private final Runnable settle = this::switchOn;
+    private final Runnable flushLater = this::flush;
 
     /** Queues "power on" and full brightness, then the last colour again. */
     private void switchOn() {
@@ -159,6 +171,7 @@ final class Strip {
         }
         channel = null;
         writing = false;
+        refusedSince = -1;
         controls.clear();
     }
 
@@ -301,6 +314,7 @@ final class Strip {
         public void onServicesDiscovered(BluetoothGatt g, int status) {
             handler.post(() -> {
                 if (g != gatt) return;
+                if (channel != null) return; // reported twice
                 BluetoothGattService service = g.getService(Leddmx.SERVICE);
                 BluetoothGattCharacteristic c = service == null ? null : service.getCharacteristic(Leddmx.CHARACTERISTIC);
                 if (c == null) {
@@ -337,7 +351,14 @@ final class Strip {
 
     private void flush() {
         if (channel == null || (pending == null && controls.isEmpty())) return;
-        if (writing && System.currentTimeMillis() - writeStarted < WRITE_TIMEOUT_MS) return;
+        long now = System.currentTimeMillis();
+        if (writing && now - writeStarted < WRITE_TIMEOUT_MS) return;
+        if (now < quietUntil) {
+            // The strip is still switching on; anything sent now would cancel it.
+            handler.removeCallbacks(flushLater);
+            handler.postDelayed(flushLater, quietUntil - now);
+            return;
+        }
         byte[] frame;
         if (!controls.isEmpty()) {
             frame = controls.poll();
@@ -353,6 +374,18 @@ final class Strip {
         channel.setValue(frame);
         writing = gatt != null && gatt.writeCharacteristic(channel);
         writeStarted = System.currentTimeMillis();
+        if (writing) {
+            refusedSince = -1;
+            if (frame[2] == 0x04) quietUntil = writeStarted + POWER_GAP_MS;
+        } else if (refusedSince < 0) {
+            refusedSince = writeStarted;
+        } else if (writeStarted - refusedSince > STUCK_MS) {
+            Log.i(TAG, "writes refused for " + (writeStarted - refusedSince) + " ms, reconnecting");
+            drop();
+            handler.removeCallbacks(reconnect);
+            connect();
+            return;
+        }
         if (!writing) {
             // The stack was busy; try this frame again shortly (a colour only unless a newer one replaces it).
             if (frame[2] == 0x07) {
