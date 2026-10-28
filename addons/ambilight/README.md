@@ -3,8 +3,9 @@
 Makes a cheap Bluetooth LED strip behind the TV follow what's on screen, like Philips Ambilight, with the music
 riding on top. About 20 times a second it takes one colour from the picture (edges weighted, black bars
 skipped), shows it at full brightness, flashes it towards white on each bass beat of what the TV is playing,
-and sends it to the strip over Bluetooth LE. Open it to switch it on (opening it again keeps it on); the separate "Ambient light off" entry switches it off. It comes
-back on after a restart if it was on.
+and sends it to the strip over Bluetooth LE. Open it to switch it on (opening it again keeps it on); the
+separate "Ambient light off" entry switches it off. It comes back on by itself, if it was on, after a restart
+(about 10 s after the TV finishes starting), after an update, and when the TV wakes from standby.
 
 It drives **LEDDMX** controllers: strips sold with the "LED LAMP" app, which show up over Bluetooth as
 `LEDDMX-00-…`, `LEDDMX-01-…` or `LEDDMX-03-…` (many USB "neon" strips on Amazon India are these). They are
@@ -57,6 +58,12 @@ plays a protected film stops it with an HDCP "HDMI connection" error.
   Atmos) through a compressed offload output that bypasses the mixer the add-on listens to, so during them the
   strip shows the picture without beat flashes (and, with screen capture only, breathes). YouTube, Spotify and most other apps play PCM and are heard.
   Playing through a Bluetooth speaker turns everything into PCM through the mixer, so then Hotstar is heard too.
+- **Standby and power-up.** Many TVs cut USB power to the strip in standby. The add-on switches the strip off
+  and lets go of it when the screen goes off, and connects again as soon as it comes back on. Straight after
+  power returns, the strip's Bluetooth answers before its LED controller listens, and a "power on" sent then is
+  lost (colour frames alone don't switch it on), so "power on" is sent again 1, 3 and 6 s after connecting and
+  every 15 s after that. A connection attempt that never answers is dropped after 35 s; Bluetooth being
+  switched off and on, or Android stopping the app for memory, start it over.
 - One Bluetooth client at a time: while the add-on is connected, the strip's phone app cannot connect, and the
   other way round. Close the phone app first.
 - A 5 m strip at full brightness can draw more than a TV USB port gives; if it flickers, power it from a
@@ -99,7 +106,7 @@ Logs: `logcat -s Ambilight`.
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION`, `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Screen capture and the strip connection run in a foreground service |
 | `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS` | Music mode: Visualizer reads the TV's own output mix (audio session 0) as a spectrum. Not the microphone; nothing is recorded or kept |
 | `CAMERA`, `FOREGROUND_SERVICE_CAMERA` | Camera mode: read a USB webcam pointed at the screen, shrunk to 64×36 in memory; nothing is saved |
-| `RECEIVE_BOOT_COMPLETED`, `SYSTEM_ALERT_WINDOW` | Switch back on after a restart, if it was on |
+| `RECEIVE_BOOT_COMPLETED`, `SYSTEM_ALERT_WINDOW` | Switch back on after a restart or an update, if it was on |
 
 No `INTERNET` permission: nothing leaves the TV except the colour sent to the strip. Captured and camera frames
 are 64×36 pixels, kept in memory only for the moment it takes to average them.
