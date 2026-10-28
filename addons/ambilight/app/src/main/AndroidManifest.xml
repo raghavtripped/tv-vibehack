@@ -56,6 +56,18 @@
             <meta-data android:name="com.gathin.tvhome.card" android:resource="@xml/module_card" />
         </activity>
 
+        <!-- A second launcher entry, "Ambient light off": the main entry only ever switches the light on. -->
+        <activity-alias
+            android:name=".OffActivity"
+            android:exported="true"
+            android:label="@string/off"
+            android:targetActivity=".AmbiActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Started over ADB to match the TV's colour reports to known colours (see the README). -->
         <activity
             android:name=".CalibrateActivity"
@@ -73,9 +85,12 @@
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
-            <intent-filter>
+            <!-- Boot completed goes to every app in turn, a minute or more on a TV full of apps: go first. -->
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <!-- Xiaomi TVs "power off" into suspend and announce the way back with this, not boot completed. -->
+                <action android:name="mitv.action.STR_BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
     </application>

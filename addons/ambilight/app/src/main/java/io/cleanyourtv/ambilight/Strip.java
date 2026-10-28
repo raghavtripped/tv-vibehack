@@ -30,6 +30,11 @@ import android.util.Log;
  * connection. A connection attempt that never answers is given up after {@link #CONNECT_TIMEOUT_MS}, and Bluetooth
  * being switched off and on again starts over, so a stale link can't leave the strip dark.
  *
+ * <p>The TV powers the strip from USB and cuts that power in standby. Straight after power comes back the strip's
+ * Bluetooth answers before its LED controller listens, so a "power on" sent then is lost and colours alone don't
+ * switch it on: "power on" is sent again a little after connecting and every {@link #KEEP_ON_MS} after that,
+ * each time followed by the last colour.
+ *
  * <p>Everything runs on the handler passed in, including the GATT callbacks' follow-up work.
  */
 @SuppressLint("MissingPermission") // BLUETOOTH and BLUETOOTH_ADMIN are install-time on the API levels this runs on.
@@ -40,6 +45,8 @@ final class Strip {
     private static final long SCAN_MS = 20_000, RETRY_MS = 5_000, WRITE_TIMEOUT_MS = 300;
     /** Android gives up on a direct connection after about 30 s; past this the stack has lost the attempt. */
     static final long CONNECT_TIMEOUT_MS = 35_000;
+    static final long KEEP_ON_MS = 15_000;
+    private static final long[] SETTLE_MS = {1_000, 3_000, 6_000};
 
     private final Context context;
     private final Handler handler;
@@ -49,7 +56,7 @@ final class Strip {
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic channel;
     private boolean closed, writing, scanning, asleep;
-    private byte[] pending;
+    private byte[] pending, lastColor;
     /** Power and brightness frames go before colours and are never replaced by them. */
     private final java.util.ArrayDeque<byte[]> controls = new java.util.ArrayDeque<>();
     private long writeStarted;
@@ -63,6 +70,24 @@ final class Strip {
     }
 
     private final Runnable reconnect = this::connect;
+    private final Runnable keepOn = new Runnable() {
+        @Override
+        public void run() {
+            if (channel == null || asleep) return;
+            switchOn();
+            handler.postDelayed(this, KEEP_ON_MS);
+        }
+    };
+    private final Runnable settle = this::switchOn;
+
+    /** Queues "power on" and full brightness, then the last colour again. */
+    private void switchOn() {
+        if (channel == null || asleep) return;
+        controls.add(Leddmx.power(true));
+        controls.add(Leddmx.brightness(100));
+        if (pending == null) pending = lastColor;
+        flush();
+    }
     private final Runnable connectTimeout = () -> {
         if (gatt == null || channel != null) return;
         Log.i(TAG, "connection attempt timed out");
@@ -98,6 +123,8 @@ final class Strip {
         handler.post(() -> {
             asleep = true;
             handler.removeCallbacks(reconnect);
+            handler.removeCallbacks(keepOn);
+            handler.removeCallbacks(settle);
             stopScan();
             if (last != null && channel != null) write(last);
             handler.postDelayed(() -> {
@@ -112,9 +139,7 @@ final class Strip {
             asleep = false;
             handler.removeCallbacks(reconnect);
             if (channel != null) {
-                controls.add(Leddmx.power(true));
-                controls.add(Leddmx.brightness(100));
-                flush();
+                ready();
                 return;
             }
             drop();
@@ -125,6 +150,8 @@ final class Strip {
     /** Forgets the current link, if any, without scheduling another attempt. */
     private void drop() {
         handler.removeCallbacks(connectTimeout);
+        handler.removeCallbacks(keepOn);
+        handler.removeCallbacks(settle);
         if (gatt != null) {
             gatt.disconnect();
             gatt.close();
@@ -286,9 +313,7 @@ final class Strip {
                 handler.removeCallbacks(connectTimeout);
                 channel = c;
                 Log.i(TAG, "strip ready");
-                controls.addFirst(Leddmx.brightness(100));
-                controls.addFirst(Leddmx.power(true));
-                flush();
+                ready();
             });
         }
 
@@ -301,6 +326,15 @@ final class Strip {
         }
     };
 
+    /** Switches the strip on now, again while it may still be starting up, then keeps it on. */
+    private void ready() {
+        switchOn();
+        handler.removeCallbacks(settle);
+        for (long ms : SETTLE_MS) handler.postDelayed(settle, ms);
+        handler.removeCallbacks(keepOn);
+        handler.postDelayed(keepOn, KEEP_ON_MS);
+    }
+
     private void flush() {
         if (channel == null || (pending == null && controls.isEmpty())) return;
         if (writing && System.currentTimeMillis() - writeStarted < WRITE_TIMEOUT_MS) return;
@@ -310,6 +344,7 @@ final class Strip {
         } else {
             frame = pending;
             pending = null;
+            lastColor = frame;
         }
         write(frame);
     }

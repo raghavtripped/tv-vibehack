@@ -8,14 +8,16 @@ import android.os.Bundle;
 import android.widget.Toast;
 
 /**
- * No screen of its own: opening the app switches the ambient light on, opening it again switches it off.
+ * No screen of its own: opening the app switches the ambient light on (opening it again keeps it on, so a
+ * double press can't switch it off by accident); the separate "Ambient light off" entry switches it off.
  * Screen capture normally asks "Start recording?" every time; granting the app PROJECT_MEDIA once over ADB
  * (see the README) makes Android answer yes without showing it.
  *
  * <p>Extras, for ADB: {@code boot} (start only if it was on), {@code brightness} 0..100, {@code address} (the
  * strip's Bluetooth address, to skip the first scan), {@code forget} (scan for the strip again), {@code crop}
  * (where the screen is in a webcam's view: "left,top,right,bottom" fractions), {@code saturation} (float 0.5..2,
- * default 1.35: how much colour boost the strip gets). Settings sent while it is on don't switch it off.
+ * default 1.35: how much colour boost the strip gets), {@code off} (switch it off). Settings sent while it is on
+ * don't switch it off.
  */
 public class AmbiActivity extends Activity {
 
@@ -55,10 +57,18 @@ public class AmbiActivity extends Activity {
             finish();
             return;
         }
-        if (!boot && AmbiService.running) {
+        boolean off = in.getBooleanExtra("off", false)
+                || (in.getComponent() != null && in.getComponent().getClassName().endsWith(".OffActivity"));
+        if (off) {
             prefs.edit().putBoolean(AmbiService.PREF_ENABLED, false).apply();
             stopService(new Intent(this, AmbiService.class));
             Toast.makeText(this, R.string.off, Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
+        if (AmbiService.running) {
+            prefs.edit().putBoolean(AmbiService.PREF_ENABLED, true).apply();
+            if (!boot) Toast.makeText(this, R.string.on, Toast.LENGTH_SHORT).show();
             finish();
             return;
         }

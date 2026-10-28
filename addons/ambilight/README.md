@@ -3,7 +3,7 @@
 Makes a cheap Bluetooth LED strip behind the TV follow what's on screen, like Philips Ambilight, with the music
 riding on top. About 20 times a second it takes one colour from the picture (edges weighted, black bars
 skipped), shows it at full brightness, flashes it towards white on each bass beat of what the TV is playing,
-and sends it to the strip over Bluetooth LE. Open it to switch it on; open it again to switch it off. It comes
+and sends it to the strip over Bluetooth LE. Open it to switch it on (opening it again keeps it on); the separate "Ambient light off" entry switches it off. It comes
 back on after a restart if it was on.
 
 It drives **LEDDMX** controllers: strips sold with the "LED LAMP" app, which show up over Bluetooth as
@@ -87,7 +87,7 @@ Or skip the scan by giving it the address yourself:
 `am start -n $P/.AmbiActivity --es address AA:BB:CC:DD:EE:FF`.
 
 Other extras: `--ei brightness 60` (percent, kept), `--ez forget true` (scan again for a new strip),
-`--es crop l,t,r,b` (camera mode), `--ef saturation 1.0` (less colour boost). Extras sent while it is on change the setting without switching it off.
+`--es crop l,t,r,b` (camera mode), `--ef saturation 1.0` (less colour boost), `--ez off true` (switch it off). Extras sent while it is on change the setting without switching it off.
 Logs: `logcat -s Ambilight`.
 
 ## Permissions
