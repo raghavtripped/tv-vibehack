@@ -7,6 +7,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.os.UserManager;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -62,6 +65,28 @@ public class HomeKeyService extends AccessibilityService {
     private long lastWindowAt;
     private static final String VOICE_SEARCH = "com.google.android.katniss";
     private static final long VOICE_RESULT_WINDOW_MS = 30_000;
+    /**
+     * Leaving the screensaver, Google TV starts its home screen, which can show a second or two late on a TV short
+     * of memory: after the person already opened an app from this launcher. Sending it back then lands on top of
+     * that app mid-start (Hotstar stayed on a blank splash, Xiaomi MOOR2). So the redirect waits REDIRECT_DELAY_MS
+     * and gives up if any other window comes forward, and is skipped within APP_OPEN_GRACE_MS of opening an app.
+     */
+    private static final long REDIRECT_DELAY_MS = 1_000;
+    private static final long APP_OPEN_GRACE_MS = 5_000;
+    /** SystemClock.uptimeMillis() when this launcher last opened an app; 0 before the first. */
+    private static volatile long appOpenedAt;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable redirect = this::goHome;
+
+    /** Called just before this launcher (Home or a remote app key) opens an app. */
+    static void noteAppOpened() {
+        appOpenedAt = SystemClock.uptimeMillis();
+    }
+
+    /** Whether a stock home screen that appeared at {@code now} came too soon after opening an app to send back. */
+    static boolean justOpenedApp(long now, long openedAt) {
+        return openedAt != 0 && now - openedAt < APP_OPEN_GRACE_MS;
+    }
 
     @Override
     protected void onServiceConnected() {
@@ -99,6 +124,7 @@ public class HomeKeyService extends AccessibilityService {
     @Override
     public void onDestroy() {
         stopWaitingForUnlock();
+        handler.removeCallbacks(redirect);
         if (volumeKeys != null) volumeKeys.stop();
         if (homeKeyReceiver != null) {
             unregisterReceiver(homeKeyReceiver);
@@ -205,12 +231,16 @@ public class HomeKeyService extends AccessibilityService {
             if (cls == null || !stockHome.contains(cls.toString())) return;
             if (VOICE_SEARCH.equals(lastWindowPackage)
                     && System.currentTimeMillis() - lastWindowAt < VOICE_RESULT_WINDOW_MS) return;
+            if (justOpenedApp(SystemClock.uptimeMillis(), appOpenedAt)) return;
         } else {
+            // Something else came forward, so the stock home screen is no longer in front.
+            handler.removeCallbacks(redirect);
             lastWindowPackage = pkg.toString();
             lastWindowAt = System.currentTimeMillis();
             return;
         }
-        goHome();
+        handler.removeCallbacks(redirect);
+        handler.postDelayed(redirect, REDIRECT_DELAY_MS);
     }
 
     /** A receiver for a broadcast only the system sends, so it has to be exported (the flag exists from Android 13). */

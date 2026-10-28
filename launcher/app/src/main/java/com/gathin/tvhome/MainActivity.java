@@ -335,6 +335,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     };
 
+    /** Every launch from Home passes here; HomeKeyService then leaves a late stock home screen alone. */
+    @Override
+    public void startActivity(Intent intent, Bundle options) {
+        HomeKeyService.noteAppOpened();
+        super.startActivity(intent, options);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
