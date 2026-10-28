@@ -11,7 +11,9 @@ It drives **LEDDMX** controllers: strips sold with the "LED LAMP" app, which sho
 `LEDDMX-00-…`, `LEDDMX-01-…` or `LEDDMX-03-…` (many USB "neon" strips on Amazon India are these). They are
 single-zone, so the whole strip shows one colour. On connect it sets the controller's own brightness to 100%.
 
-Tested on a Xiaomi MiTV-MOOR2 (Google TV / Android 11, MediaTek m7632, 4K panel) with an LEDDMX-03 strip.
+Tested on a Xiaomi MiTV-MOOR2 (Google TV / Android 11, MediaTek m7632, 4K panel) with an LEDDMX-03 strip. Checked with
+photos of the wall: standby and back, power off and on with the remote, a full shutdown and start, and reboots;
+the strip comes back on by itself each time.
 
 ## Where the picture comes from
 
